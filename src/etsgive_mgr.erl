@@ -83,15 +83,23 @@ handle_call(_Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast({gift, Data}, State) ->
-        SRV = whereis(etsgive_srv),
-        link(SRV),
         TableId = ets:new(?MODULE, [private]),
         ets:insert(TableId, Data),
         ets:setopts(TableId, {heir, self(), Data}),
-        ets:give_away(TableId, SRV, Data),
+        giveaway_table(TableId, Data),
         {noreply, State#state{table_id=TableId}};
 handle_cast(_Msg, State) ->
         {noreply, State}.
+
+giveaway_table(TableId, Data) ->
+    try
+        SRV = wait_for_srv(),
+        link(SRV),
+        ets:give_away(TableId, SRV, Data)
+    catch K:V ->
+        io:format("Problem giving ets table away ~p ~p", [K, V]),
+        giveaway_table(TableId, Data)
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -108,11 +116,9 @@ handle_info({'EXIT',Pid,killed}, State) ->
     io:format("SRV(~p) !! is now dead, farewell TableId: ~p~n", [Pid, TableId]),
     {noreply, State};
 handle_info({'ETS-TRANSFER', TableId, Pid, Data}, State) ->
-    SRV = wait_for_srv(),
     io:format("Warning TableId: ~p OwnerPid: ~p is dying~n"
               "SRV(~p) => MGR(~p) handing TableId: ~p~n", [TableId, Pid, Pid, self(), TableId]),
-    link(SRV),
-    ets:give_away(TableId, SRV, Data),
+    giveaway_table(TableId, Data),
     {noreply, State#state{table_id=TableId}}.
 
 wait_for_srv() -> 
